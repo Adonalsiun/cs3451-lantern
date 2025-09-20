@@ -81,9 +81,9 @@ public:
 				 0., 0., 0., 1.;
 			float angle = 3.1415927f * -.5f;
 			Matrix4f r;
-			r << cos(angle), 0., -sin(angle), 0.,
+			r << cos(angle), 0., sin(angle), 0.,
 				0., 1., 0., 0.,
-				sin(angle), 0., cos(angle), 0.,
+				-sin(angle), 0., cos(angle), 0.,
 				0., 0., 0., 1.;
 
 			castle->Set_Model_Matrix(t*r);
