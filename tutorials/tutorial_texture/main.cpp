@@ -204,7 +204,7 @@ public:
 		OpenGLShaderLibrary::Instance()->Add_Shader_From_File(vertex_shader_file_name,fragment_shader_file_name,"a3_shader");
 
 		////specifying the textures
-		OpenGLTextureLibrary::Instance()->Add_Texture_From_File("dart_albedo.jpg", "albedo");
+		OpenGLTextureLibrary::Instance()->Add_Texture_From_File("dart_albedo2.jpg", "albedo");
 		OpenGLTextureLibrary::Instance()->Add_Texture_From_File("earth_normal.png", "normal");
 
 		////bind the shader with each mesh object in the object array
