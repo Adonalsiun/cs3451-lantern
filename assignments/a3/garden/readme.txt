@@ -1,1 +1,0 @@
-Unzip garden.zip and put all .obj files in the same directory as this file.
