@@ -265,7 +265,9 @@ class OpenGLTriangleMesh : public OpenGLMesh<TriangleMesh<3> >
 			shader->Set_Uniform("ka", ka);
 			shader->Set_Uniform("kd", kd);
 			shader->Set_Uniform("ks", ks);
+			shader->Set_Uniform("ks", ks);
 			shader->Set_Uniform("shininess", shininess);
+            Set_Shader_Parameters();
 			Bind_Uniform_Block_To_Ubo(shader,"camera");
 			glBindVertexArray(vao);
 			glDrawElements(GL_TRIANGLES,ele_size,GL_UNSIGNED_INT,0);
@@ -286,7 +288,7 @@ class OpenGLTriangleMesh : public OpenGLMesh<TriangleMesh<3> >
 			shader->Set_Uniform("kd", kd);
 			shader->Set_Uniform("ks", ks);
 			shader->Set_Uniform("shininess", shininess);
-
+            Set_Shader_Parameters();
 			Bind_Uniform_Block_To_Ubo(shader,"camera");
 			glBindVertexArray(vao);
 			glDrawElements(GL_TRIANGLES,ele_size,GL_UNSIGNED_INT,0);
@@ -308,6 +310,8 @@ class OpenGLTriangleMesh : public OpenGLMesh<TriangleMesh<3> >
 			shader->Set_Uniform("kd", kd);
 			shader->Set_Uniform("ks", ks);
 			shader->Set_Uniform("shininess", shininess);
+            
+            Set_Shader_Parameters();
 
 			// bind cube map
 			auto cube_map = OpenGLTextureLibrary::Get_Texture("cube_map");

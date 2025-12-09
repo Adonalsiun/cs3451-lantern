@@ -102,7 +102,7 @@ public:
 	virtual std::string Get_String(){return frame_info_string;}
 	virtual void Add_Shader_Program(std::shared_ptr<OpenGLShaderProgram> shader_program) { shader_programs.push_back(shader_program); }
 	virtual void Add_Texture(std::string binding_name, std::shared_ptr<OpenGLTexture> texture) { textures.push_back(TextureBinding{ binding_name, texture }); }
-	virtual void Set_Shader_Parameters(){}
+	virtual void Set_Shader_Parameters() const {}
 	virtual void Set_Texture(const std::string& _tex_name){tex_name=_tex_name;use_vtx_tex=true;}
 	virtual void Set_Polygon_Mode(const PolygonMode _mode){polygon_mode=_mode;}
 	virtual void Set_Shading_Mode(const ShadingMode _mode){shading_mode=_mode;}

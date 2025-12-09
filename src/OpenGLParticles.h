@@ -45,7 +45,8 @@ public:
 			else OpenGL_Vertex(placeholder,opengl_vertices);	////placeholder, 1 float
 			if(use_vtx_color){
 				//OpenGLColor color=color_mapper->Color((*colors)[i]);	////TOFIX
-				OpenGL_Color4(color.rgba,opengl_vertices);}}	////color, 4 floats
+                // Use (*colors)[i] as alpha override
+				OpenGL_Vertex4(Vector4(color.rgba[0], color.rgba[1], color.rgba[2], (*colors)[i]), opengl_vertices);}}	////color, 4 floats
 		
 		Set_OpenGL_Vertices();
 		int idx=0;{Set_OpenGL_Vertex_Attribute(0,4,stride_size,0);idx++;}	////position
