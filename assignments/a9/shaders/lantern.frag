@@ -304,10 +304,25 @@ void main()
     // --- Volumetric Glow (Fake Halo) ---
     // Calculate rim light or view-dependent glow
     // vec3 V is already defined
+    // --- Enhanced Rim Lighting ---
+    // Calculate rim light for the entire lantern (not just paper)
     float rim = 1.0 - max(dot(world_normal, V), 0.0);
-    rim = pow(rim, 3.0);
+    rim = pow(rim, 2.5); // Slightly wider rim (lower power = wider glow)
+
+    // Stronger rim on paper, but also visible on frame
+    vec3 rim_color = tint * vec3(1.0, 0.6, 0.2); // Use the lantern's tint for colored rims
+    float rim_intensity = is_paper * 1.5 + 0.3; // Paper glows more (1.5+0.3=1.8), frame glows less (0.3)
+
+    // Animated pulsing rim
+    float rim_pulse = 0.8 + 0.2 * sin(time * 3.0 + seed);
+    rim_intensity *= rim_pulse;
+
+    final_color += rim_color * rim * rim_intensity;
+
+    // Add extra highlight on the edges facing the camera
+    float edge_highlight = pow(rim, 8.0); // Very tight edge highlight
+    final_color += vec3(1.0, 0.8, 0.5) * edge_highlight * 0.5; // Bright white-yellow edge
     
-    final_color += vec3(1.0, 0.5, 0.0) * rim * is_paper * 0.5;
 
     frag_color = vec4(final_color, 1.0);
 }
