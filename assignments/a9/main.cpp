@@ -198,6 +198,321 @@ public:
         return mesh_obj;
     }
 
+    // ========== Shadow Ray Computation Functions ==========
+    //
+    // These functions implement shadow computation by casting shadow rays from intersection
+    // points to light sources (lanterns). The implementation uses ray-triangle intersection
+    // testing to determine if a point is occluded from a light source.
+    //
+    // Usage Example:
+    //   Vector3f intersectionPoint(0.0f, 5.0f, 0.0f);  // World space point
+    //   float shadowFactor = ComputeShadowFactor(intersectionPoint);
+    //   // shadowFactor is 0.0 (fully shadowed) to 1.0 (fully lit)
+    //
+    //   // Or check individual lights:
+    //   std::vector<Vector3f> lanterns = GetLanternPositions();
+    //   for (const auto& lightPos : lanterns) {
+    //       bool inShadow = IsPointInShadow(intersectionPoint, lightPos);
+    //       // Use inShadow to modulate lighting contribution
+    //   }
+    //
+    
+    /**
+     * Transform a 3D point from model space to world space using a 4x4 transformation matrix
+     */
+    Vector3f TransformPoint(const Matrix4f& transform, const Vector3& point)
+    {
+        Vector4f homogeneous(static_cast<float>(point[0]), static_cast<float>(point[1]), static_cast<float>(point[2]), 1.0f);
+        Vector4f transformed = transform * homogeneous;
+        return Vector3f(transformed[0], transformed[1], transformed[2]);
+    }
+
+    /**
+     * Ray-Triangle Intersection TEST ONLY (Moller-Trumbore algorithm)
+     * Returns true if ray intersects triangle, and stores the intersection distance in t
+     */
+    bool RayTriangleIntersect(
+        const Vector3f& rayOrigin, 
+        const Vector3f& rayDir,
+        const Vector3f& v0, 
+        const Vector3f& v1, 
+        const Vector3f& v2,
+        float& t)
+    {
+        const float EPSILON = 1e-6f;
+        
+        Vector3f edge1 = v1 - v0;
+        Vector3f edge2 = v2 - v0;
+        Vector3f h = rayDir.cross(edge2);
+        float a = edge1.dot(h);
+        
+        if (a > -EPSILON && a < EPSILON)
+            return false; // Ray is parallel to triangle
+            
+        float f = 1.0f / a;
+        Vector3f s = rayOrigin - v0;
+        float u = f * s.dot(h);
+        
+        if (u < 0.0f || u > 1.0f)
+            return false;
+            
+        Vector3f q = s.cross(edge1);
+        float v = f * rayDir.dot(q);
+        
+        if (v < 0.0f || u + v > 1.0f)
+            return false;
+            
+        // Compute intersection distance
+        t = f * edge2.dot(q);
+        
+        // Check if intersection is in front of ray origin
+        return t > EPSILON;
+    }
+
+    /**
+     * Check if a shadow ray from intersection point to light source hits any geometry
+     * Returns true if the point is in shadow (ray is blocked)
+     */
+    bool IsPointInShadow(
+        const Vector3f& intersectionPoint,
+        const Vector3f& lightPosition,
+        OpenGLTriangleMesh* excludeMesh = nullptr)
+    {
+        // Compute shadow ray direction and distance
+        Vector3f rayDir = lightPosition - intersectionPoint;
+        float lightDistance = rayDir.norm();
+        
+        if (lightDistance < 1e-6f)
+            return false; 
+            
+        rayDir.normalize();
+        
+        Vector3f rayOrigin = intersectionPoint + rayDir * 1e-4f;
+        
+        // Test against all meshes in the scene
+        for (auto* mesh_obj : mesh_object_array) {
+            if (mesh_obj == excludeMesh)
+                continue;
+                
+            // Get model matrix (transforms from model space to world space)
+            Matrix4f modelMatrix;
+            for (int i = 0; i < 4; i++) {
+                for (int j = 0; j < 4; j++) {
+                    modelMatrix(i, j) = mesh_obj->model_matrix[j][i]; // GLM[col][row] -> Eigen(row,col)
+                }
+            }
+            
+            const auto& vertices = mesh_obj->mesh.Vertices();
+            const auto& elements = mesh_obj->mesh.Elements();
+            
+            for (const auto& tri : elements) {
+                // Get triangle vertices in model space (Vector3)
+                const Vector3& v0_model = vertices[tri[0]];
+                const Vector3& v1_model = vertices[tri[1]];
+                const Vector3& v2_model = vertices[tri[2]];
+                
+                // Transform triangle vertices to world space
+                Vector3f v0_world = TransformPoint(modelMatrix, v0_model);
+                Vector3f v1_world = TransformPoint(modelMatrix, v1_model);
+                Vector3f v2_world = TransformPoint(modelMatrix, v2_model);
+                
+                // Test ray-triangle intersection
+                float t;
+                if (RayTriangleIntersect(rayOrigin, rayDir, v0_world, v1_world, v2_world, t)) {
+                    // Check if intersection is between point and light
+                    if (t < lightDistance - 1e-4f) {
+                        return true; // Ray is blocked, point is in shadow
+                    }
+                }
+            }
+        }
+        
+        return false; // No occlusion found, point is lit
+    }
+
+    /**
+     * Get all lantern positions (light sources) in world space
+     * Returns a vector of lantern positions
+     */
+    std::vector<Vector3f> GetLanternPositions()
+    {
+        std::vector<Vector3f> positions;
+        
+        if (!glow_system)
+            return positions;
+            
+        // Get positions from glow system particles
+        // Index 0 is hero lantern, indices 1+ are background lanterns
+        const auto& particlePositions = glow_system->particles.X();
+        
+        for (size_t i = 0; i < particlePositions->size(); ++i) {
+            const Vector3& pos = (*particlePositions)[i];
+            positions.push_back(Vector3f(static_cast<float>(pos[0]), static_cast<float>(pos[1]), static_cast<float>(pos[2])));
+        }
+        
+        return positions;
+    }
+
+    /**
+     * Compute shadow factor for a point from all lantern light sources
+     * Returns a value between 0.0 (fully shadowed) and 1.0 (fully lit)
+     * This can be used to modulate lighting contribution
+     */
+    float ComputeShadowFactor(const Vector3f& intersectionPoint, OpenGLTriangleMesh* excludeMesh = nullptr)
+    {
+        std::vector<Vector3f> lanternPositions = GetLanternPositions();
+        
+        if (lanternPositions.empty())
+            return 1.0f; 
+            
+        int litCount = 0;
+        int totalLights = lanternPositions.size();
+        
+        // Check shadow from each lantern
+        for (const auto& lightPos : lanternPositions) {
+            if (!IsPointInShadow(intersectionPoint, lightPos, excludeMesh)) {
+                litCount++;
+            }
+        }
+        
+        // Return fraction of lights that are not blocked
+        return static_cast<float>(litCount) / static_cast<float>(totalLights);
+    }
+
+    /**
+     * Compute individual shadow factors for each lantern
+     * Returns a vector where each element is 1.0 if that lantern is visible, 0.0 if shadowed
+     */
+    std::vector<float> ComputeShadowFactorsPerLight(const Vector3f& intersectionPoint, OpenGLTriangleMesh* excludeMesh = nullptr)
+    {
+        std::vector<Vector3f> lanternPositions = GetLanternPositions();
+        std::vector<float> shadowFactors;
+        
+        for (const auto& lightPos : lanternPositions) {
+            float factor = IsPointInShadow(intersectionPoint, lightPos, excludeMesh) ? 0.0f : 1.0f;
+            shadowFactors.push_back(factor);
+        }
+        
+        return shadowFactors;
+    }
+
+    // Shadow computation settings
+    bool enable_shadows = true;
+    int shadow_update_interval = 15; // Update shadows every N frames (15 = every 15 frames for performance)
+    int frame_count = 0;
+    float current_shadow_factor = 1.0f; // Current shadow factor (persists between updates)
+    
+    bool debug_shadows = false; // Set to true to see shadow computation in console (disabled for performance)
+
+    /**
+     * Compute shadow factors for vertices of a mesh
+     * Stores shadow factors that can be passed to shader
+     */
+    void ComputeMeshShadowFactors(OpenGLTriangleMesh* mesh_obj, std::vector<float>& shadowFactors)
+    {
+        shadowFactors.clear();
+        
+        if (!enable_shadows || !mesh_obj)
+            return;
+            
+        // Get mesh vertices in world space
+        Matrix4f modelMatrix;
+        for (int i = 0; i < 4; i++) {
+            for (int j = 0; j < 4; j++) {
+                modelMatrix(i, j) = mesh_obj->model_matrix[j][i];
+            }
+        }
+        
+        const auto& vertices = mesh_obj->mesh.Vertices();
+        shadowFactors.reserve(vertices.size());
+        
+        // Compute shadow factor for each vertex
+        for (const auto& vtx : vertices) {
+            Vector3f worldPos = TransformPoint(modelMatrix, vtx);
+            float shadowFactor = ComputeShadowFactor(worldPos, mesh_obj);
+            shadowFactors.push_back(shadowFactor);
+        }
+    }
+
+    /**
+     * Update shadow data and pass to shaders
+     * Computes shadows for key points and passes lantern positions to shaders
+     */
+    void UpdateShadowData()
+    {
+        // Get all lantern positions
+        std::vector<Vector3f> lanternPositions = GetLanternPositions();
+        
+        if (lanternPositions.empty())
+            return;
+            
+        // Get the lantern shader
+        auto lanternShader = OpenGLShaderLibrary::Get_Shader("lantern");
+        if (!lanternShader)
+            return;
+            
+        lanternShader->Set_Uniform("num_lanterns", (int)lanternPositions.size());
+        
+        for (size_t i = 0; i < lanternPositions.size() && i < 32; ++i) {
+            std::string uniformName = "lantern_positions[" + std::to_string(i) + "]";
+            lanternShader->Set_Uniform(uniformName, Vector3f(lanternPositions[i][0], lanternPositions[i][1], lanternPositions[i][2]));
+        }
+        
+        if (enable_shadows && (frame_count % shadow_update_interval == 0)) {
+            float totalShadowFactor = 0.0f;
+            int sampleCount = 0;
+            
+            if (hero_lantern) {
+                Matrix4f heroMatrix;
+                for (int i = 0; i < 4; i++) {
+                    for (int j = 0; j < 4; j++) {
+                        heroMatrix(i, j) = hero_lantern->model_matrix[j][i];
+                    }
+                }
+                const auto& vertices = hero_lantern->mesh.Vertices();
+                int sampleStep = std::max(1, (int)vertices.size() / 3); // Sample ~3 vertices
+                for (size_t v = 0; v < vertices.size() && sampleCount < 3; v += sampleStep) {
+                    Vector3f worldPos = TransformPoint(heroMatrix, vertices[v]);
+                    float shadowFactor = ComputeShadowFactor(worldPos, hero_lantern);
+                    totalShadowFactor += shadowFactor;
+                    sampleCount++;
+                }
+            }
+            
+            for (size_t i = 0; i < background_lanterns.size() && i < 2; ++i) {
+                auto* lantern = background_lanterns[i];
+                Matrix4f lanternMatrix;
+                for (int j = 0; j < 4; j++) {
+                    for (int k = 0; k < 4; k++) {
+                        lanternMatrix(j, k) = lantern->model_matrix[k][j];
+                    }
+                }
+                const auto& vertices = lantern->mesh.Vertices();
+                int sampleStep = std::max(1, (int)vertices.size() / 2); // Sample ~2 vertices
+                for (size_t v = 0; v < vertices.size() && v < 5; v += sampleStep) {
+                    Vector3f worldPos = TransformPoint(lanternMatrix, vertices[v]);
+                    float shadowFactor = ComputeShadowFactor(worldPos, lantern);
+                    totalShadowFactor += shadowFactor;
+                    sampleCount++;
+                }
+            }
+            
+            if (sampleCount > 0) {
+                current_shadow_factor = totalShadowFactor / static_cast<float>(sampleCount);
+            } else {
+                current_shadow_factor = 1.0f; 
+            }
+            
+            if (debug_shadows && frame_count % 60 == 0) {
+                std::cout << "Average shadow factor: " << current_shadow_factor 
+                          << " (from " << sampleCount << " vertex samples)" << std::endl;
+            }
+        }
+        
+        // Always set shadow factor (even if not updated this frame, use previous value)
+        lanternShader->Set_Uniform("global_shadow_factor", current_shadow_factor);
+    }
+
     virtual void Toggle_Next_Frame()
     {
         float time = GLfloat(clock() - startTime) / CLOCKS_PER_SEC;
@@ -207,6 +522,10 @@ public:
 
         for (auto &mesh_obj : mesh_object_array)
             mesh_obj->setTime(time);
+        
+        // Update shadow data (pass lantern positions to shader)
+        UpdateShadowData();
+        frame_count++;
 
         if (bgEffect){
             bgEffect->setResolution((float)Win_Width(), (float)Win_Height());

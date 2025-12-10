@@ -48,6 +48,11 @@ uniform sampler2D tex_normal;   /* texture sampler for normal vector */
 uniform float time; // Time for animation
 uniform float seed; // PCG Seed
 
+// Shadow computation uniforms
+uniform int num_lanterns = 0; // Number of lantern light sources
+uniform vec3 lantern_positions[32]; // Lantern positions (max 32)
+uniform float global_shadow_factor = 0.5; // Global shadow factor (0.0 = shadowed, 1.0 = lit)
+
 /*output variables*/
 out vec4 frag_color;
 
@@ -176,8 +181,7 @@ void main()
     vec3 frame_lighting = vec3(0.0);
     vec3 ambient = ka * 0.2; // global ambient
     vec3 V = normalize(e - p);
-    
-    // Iterate lights (assuming standard 2 lights from main.cpp)
+
     for(int i=0; i<lt_att[0] && i < 4; ++i) {
         vec3 L = normalize(lt[i].pos.xyz - p);
         if(lt[i].pos.w == 0.0) L = normalize(lt[i].dir.xyz); // Directional
@@ -201,7 +205,89 @@ void main()
         frame_lighting += (diffuse + specular) * attenuation; // ambient added once
     }
     
-    frame_lighting += ambient;
+    // --- Lantern Lighting with Shadow Computation ---
+    // Add lighting from lanterns (light sources) with shadow factors
+    // Note: Full shadow ray tracing is computed on CPU, but we can add
+    // per-lantern lighting here. For full shadows, shadow factors would
+    // be passed as vertex attributes or computed per-vertex.
+    
+    vec3 lantern_lighting = vec3(0.0);
+    vec3 lantern_color = vec3(1.0, 0.6, 0.2); // Warm orange lantern light
+    float lantern_intensity = 2.0;
+    
+    for(int i = 0; i < num_lanterns && i < 32; ++i) {
+        vec3 lightPos = lantern_positions[i];
+        vec3 L = normalize(lightPos - p);
+        float dist = length(lightPos - p);
+        
+
+        float shadowFactor = 1.0;
+
+        int maxChecks = (num_lanterns < 10) ? num_lanterns : 10; // Limit to 10 lanterns max -- debugging
+        
+        // For each other lantern, check if it's between this fragment and the current light
+        for(int j = 0; j < maxChecks && j < 32; ++j) {
+            if (j == i) continue; // Skip the current light source
+            
+            vec3 otherLanternPos = lantern_positions[j];
+            vec3 toOtherLantern = otherLanternPos - p;
+            vec3 toLight = lightPos - p;
+            
+
+            float distToOther = length(toOtherLantern);
+            float distToLight = length(toLight);
+
+            if (distToOther > distToLight * 2.0) continue;
+            
+            if (distToOther < distToLight) {
+                vec3 dirToOther = normalize(toOtherLantern);
+                vec3 dirToLight = normalize(toLight);
+                float alignment = dot(dirToOther, dirToLight);
+                
+                // If lanterns are aligned (other lantern is between fragment and light)
+                if (alignment > 0.7) {
+                    float occlusion = 1.0 - smoothstep(0.0, distToLight, distToOther);
+                    // Larger occlusion for better aligned lanterns
+                    occlusion *= smoothstep(0.7, 1.0, alignment);
+                    shadowFactor = min(shadowFactor, 1.0 - occlusion * 0.95); // VERY strong occlusion (95%)
+                    
+                    if (shadowFactor < 0.1) break;
+                }
+            }
+        }
+        
+        // global shadow factor as a base
+        shadowFactor = min(shadowFactor, global_shadow_factor);
+        
+        // Make shadows EXTREMELY dark almost completely black when shadowed
+        shadowFactor = mix(0.0, 1.0, shadowFactor);
+        
+        if (shadowFactor < 0.3) {
+            shadowFactor *= 0.3;
+        }
+        
+        // Apply exponential darkening for more dramatic effect
+        shadowFactor = pow(shadowFactor, 1.5); 
+        
+        // Diffuse lighting from lantern
+        float diff = max(dot(world_normal, L), 0.0);
+        vec3 diffuse = kd * diff * lantern_color * lantern_intensity;
+        
+        // Specular
+        vec3 R = reflect(-L, world_normal);
+        float spec = pow(max(dot(V, R), 0.0), shininess);
+        vec3 specular = ks * spec * lantern_color * lantern_intensity;
+        
+        // Distance attenuation (inverse square law with minimum distance)
+        float minDist = 0.5;
+        float attenDist = max(dist, minDist);
+        float attenuation = 1.0 / (1.0 + 0.1 * attenDist + 0.01 * attenDist * attenDist);
+        
+        // Apply shadow factor
+        lantern_lighting += (diffuse + specular) * attenuation * shadowFactor;
+    }
+    
+    frame_lighting += ambient + lantern_lighting;
     
     // Combine
     // If paper, use emissive mainly. If frame, use lighting.
