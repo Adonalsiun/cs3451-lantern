@@ -42,12 +42,26 @@ class MyDriver : public OpenGLViewer
     OpenGLSkybox *skybox = nullptr;
     // OpenGLParticles<Particles<3>>* embers = nullptr; // Removed
     OpenGLParticles<Particles<3>>* glow_system = nullptr; // Glow System
+    OpenGLParticles<Particles<3>>* trail_system = nullptr;
     clock_t startTime;
+
+    OpenGLTriangleMesh* water_plane = nullptr;
 
     // Lanterns
     // Lanterns
     LanternObject* hero_lantern = nullptr;
     std::vector<LanternObject*> background_lanterns;
+
+    // Add to MyDriver class private section
+    struct TrailParticle {
+        int index;          // Index in particle array
+        float birth_time;   // When particle was created
+        Vector3 velocity;   // Particle velocity
+    };
+
+    std::vector<TrailParticle> active_trails;
+    int next_trail_index = 0;
+    float last_trail_spawn_time = 0.0f;
 
 public:
     virtual void Initialize()
@@ -72,6 +86,14 @@ public:
         // Embers shader removed
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/glow.vert", "shaders/glow.frag", "glow");
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/skybox.vert", "shaders/skybox.frag", "skybox");
+
+        OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/water.vert", 
+                                                       "shaders/water.frag", 
+                                                       "water");
+
+        OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/trail.vert", 
+                                                        "shaders/trail.frag", 
+                                                        "trail");
         
         //// Load Textures
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/bunny_color.jpg", "bunny_color");
@@ -116,6 +138,42 @@ public:
             glow_system->opengl_points.Initialize();
             glow_system->opengl_points.shader_programs[0] = OpenGLShaderLibrary::Get_Shader("glow");
             glow_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 1.0f)); // Orange glow
+        }
+
+        {
+            int max_trail_particles = 2000;
+            trail_system = Add_Interactive_Object<OpenGLParticles<Particles<3>>>();
+            trail_system->particles.Add_Elements(max_trail_particles);
+            trail_system->Initialize();
+            
+            trail_system->opengl_points.Initialize();
+            trail_system->opengl_points.shader_programs[0] = OpenGLShaderLibrary::Get_Shader("trail");
+            trail_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 0.0f)); // Start transparent
+        }
+
+        //// Water Plane
+        {
+            water_plane = Create_Water_Plane(50.0f, 50); // 50x50 size, 50 subdivisions
+            
+            // Position at y = -10 (below lanterns)
+            Matrix4f t;
+            t << 1, 0, 0, 0,
+                0, 1, 0, -10,
+                0, 0, 1, 0,
+                0, 0, 0, 1;
+            water_plane->Set_Model_Matrix(t);
+            
+            // Set material properties
+            water_plane->Set_Ka(Vector3f(0.1, 0.1, 0.2));
+            water_plane->Set_Kd(Vector3f(0.2, 0.4, 0.5));
+            water_plane->Set_Ks(Vector3f(0.8, 0.8, 0.8));
+            water_plane->Set_Shininess(128);
+            
+            water_plane->Add_Shader_Program(OpenGLShaderLibrary::Get_Shader("water"));
+            Set_Polygon_Mode(water_plane, PolygonMode::Fill);
+            Set_Shading_Mode(water_plane, ShadingMode::TexAlpha);
+            water_plane->Set_Data_Refreshed();
+            water_plane->Initialize();
         }
 
         //// Hero Lantern
@@ -195,6 +253,57 @@ public:
         mesh_obj->mesh = *meshes[0];
         mesh_obj->seed = seed;
         mesh_object_array.push_back(mesh_obj);
+        return mesh_obj;
+    }
+
+    OpenGLTriangleMesh* Create_Water_Plane(float size, int subdivisions)
+    {
+        auto mesh_obj = Add_Interactive_Object<OpenGLTriangleMesh>();
+        
+        // Create vertices for a subdivided plane
+        std::vector<Vector3> vertices;
+        std::vector<Vector3i> triangles;
+        std::vector<Vector2> uvs;
+        
+        float step = size / subdivisions;
+        
+        // Generate vertices
+        for (int z = 0; z <= subdivisions; ++z) {
+            for (int x = 0; x <= subdivisions; ++x) {
+                float px = -size/2 + x * step;
+                float pz = -size/2 + z * step;
+                vertices.push_back(Vector3(px, 0, pz));
+                
+                // UV coordinates
+                uvs.push_back(Vector2(float(x)/subdivisions, float(z)/subdivisions));
+            }
+        }
+        
+        // Generate triangles
+        for (int z = 0; z < subdivisions; ++z) {
+            for (int x = 0; x < subdivisions; ++x) {
+                int i0 = z * (subdivisions + 1) + x;
+                int i1 = i0 + 1;
+                int i2 = i0 + (subdivisions + 1);
+                int i3 = i2 + 1;
+                
+                // Two triangles per quad
+                triangles.push_back(Vector3i(i0, i2, i1));
+                triangles.push_back(Vector3i(i1, i2, i3));
+            }
+        }
+        
+        // Set mesh data
+        mesh_obj->mesh.Vertices() = vertices;
+        mesh_obj->mesh.Elements() = triangles;
+        
+        // Calculate normals (all pointing up for a flat plane)
+        std::vector<Vector3> normals(vertices.size(), Vector3(0, 1, 0));
+        mesh_obj->mesh.Normals() = normals;
+        
+        // Set UVs
+        mesh_obj->mesh.Uvs() = uvs;
+ 
         return mesh_obj;
     }
 
@@ -520,6 +629,16 @@ public:
         OpenGLShaderLibrary::Get_Shader("lantern")->Set_Uniform("time", time);
         OpenGLShaderLibrary::Get_Shader("glow")->Set_Uniform("time", time);
 
+        // Update trail shader time
+        if (trail_system) {
+            OpenGLShaderLibrary::Get_Shader("trail")->Set_Uniform("time", time);
+        }
+
+        if (water_plane) {
+            OpenGLShaderLibrary::Get_Shader("water")->Set_Uniform("time", time);       
+            water_plane->setTime(time);
+        }
+
         for (auto &mesh_obj : mesh_object_array)
             mesh_obj->setTime(time);
         
@@ -582,6 +701,52 @@ public:
              }
         }
 
+        if (trail_system && hero_lantern) {
+            float spawn_rate = 0.05f;
+            
+            if (time - last_trail_spawn_time > spawn_rate) {
+                last_trail_spawn_time = time;
+                
+                TrailParticle trail;
+                trail.index = next_trail_index;
+                trail.birth_time = time;
+                trail.velocity = Vector3((rand() % 100 - 50) / 200.0, -0.3, (rand() % 100 - 50) / 200.0);
+                
+                (*trail_system->particles.X())[trail.index] = Vector3(hero_drift_x, hero_current_y, 0);
+                
+                active_trails.push_back(trail);
+                next_trail_index = (next_trail_index + 1) % 2000;
+            }
+            
+            float lifetime = 8.0f;
+            float dt = 0.016f;
+            
+            // Update all active trails
+            for (auto it = active_trails.begin(); it != active_trails.end(); ) {
+                float age = time - it->birth_time;
+                
+                if (age > lifetime) {
+                    // Move particle far away and remove from active list
+                    (*trail_system->particles.X())[it->index] = Vector3(10000, 10000, 10000);
+                    it = active_trails.erase(it);
+                } else {
+                    // Update position - keep them moving
+                    int idx = it->index;
+                    Vector3 current_pos = (*trail_system->particles.X())[idx];
+                    Vector3 new_pos(
+                        current_pos[0] + it->velocity[0] * dt,
+                        current_pos[1] + it->velocity[1] * dt,
+                        current_pos[2] + it->velocity[2] * dt
+                    );
+                    (*trail_system->particles.X())[idx] = new_pos;
+                    
+                    ++it;
+                }
+            }
+            
+            trail_system->Set_Color(OpenGLColor(1.0f, 0.7f, 0.2f, 1.0f));
+            trail_system->Set_Data_Refreshed();
+        }
         // Background Lanterns
         for (size_t i = 0; i < background_lanterns.size(); ++i) {
              auto l = background_lanterns[i];
