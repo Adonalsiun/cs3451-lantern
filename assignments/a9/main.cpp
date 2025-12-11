@@ -27,6 +27,10 @@
 class LanternObject : public OpenGLTriangleMesh {
 public:
     float seed = 0.0f;
+    // AABB for shadow optimization
+    Vector3 min_aabb;
+    Vector3 max_aabb;
+
     virtual void Set_Shader_Parameters() const override {
         // Pass seed to shader
         if (shader_programs.size() > 0) {
@@ -131,7 +135,7 @@ public:
         //// Glow System
         {
             glow_system = Add_Interactive_Object<OpenGLParticles<Particles<3>>>();
-            glow_system->particles.Add_Elements(1 + 30);
+            glow_system->particles.Add_Elements(1 + 100);
             glow_system->Initialize();
             
             // Fix: Initialize points and Override shader
@@ -197,12 +201,12 @@ public:
         }
 
         //// Background Lanterns
-        int num_lanterns = 30;
+        int num_lanterns = 100;
         std::mt19937 rng(42); 
-        std::uniform_real_distribution<float> dist_x(-15.0f, 15.0f);
-        std::uniform_real_distribution<float> dist_y(-2.0f, 20.0f);
-        std::uniform_real_distribution<float> dist_z(-10.0f, 10.0f);
-        std::uniform_real_distribution<float> dist_scale(0.3f, 0.6f); 
+        std::uniform_real_distribution<float> dist_x(-40.0f, 40.0f);
+        std::uniform_real_distribution<float> dist_y(-8.0f, 20.0f);
+        std::uniform_real_distribution<float> dist_z(-30.0f, 30.0f);
+        std::uniform_real_distribution<float> dist_scale(0.8f, 1.8f); 
 
         for (int i = 0; i < num_lanterns; ++i) {
             float seed = (float)i * 17.5f + 42.0f;
@@ -252,6 +256,19 @@ public:
 
         mesh_obj->mesh = *meshes[0];
         mesh_obj->seed = seed;
+        
+        // Compute AABB
+        if (!mesh_obj->mesh.Vertices().empty()) {
+            Vector3 minB = mesh_obj->mesh.Vertices()[0];
+            Vector3 maxB = mesh_obj->mesh.Vertices()[0];
+            for (const auto& v : mesh_obj->mesh.Vertices()) {
+                minB = minB.cwiseMin(v);
+                maxB = maxB.cwiseMax(v);
+            }
+            mesh_obj->min_aabb = minB;
+            mesh_obj->max_aabb = maxB;
+        }
+
         mesh_object_array.push_back(mesh_obj);
         return mesh_obj;
     }
@@ -379,64 +396,121 @@ public:
     }
 
     /**
+     * AABB Intersection Test
+     */
+    bool IntersectAABB(const Vector3f& rayOrigin, const Vector3f& rayDir, const Vector3& minB, const Vector3& maxB)
+    {
+        float tmin = (minB[0] - rayOrigin[0]) / rayDir[0];
+        float tmax = (maxB[0] - rayOrigin[0]) / rayDir[0];
+
+        if (tmin > tmax) std::swap(tmin, tmax);
+
+        float tymin = (minB[1] - rayOrigin[1]) / rayDir[1];
+        float tymax = (maxB[1] - rayOrigin[1]) / rayDir[1];
+
+        if (tymin > tymax) std::swap(tymin, tymax);
+
+        if ((tmin > tymax) || (tymin > tmax))
+            return false;
+
+        if (tymin > tmin)
+            tmin = tymin;
+
+        if (tymax < tmax)
+            tmax = tymax;
+
+        float tzmin = (minB[2] - rayOrigin[2]) / rayDir[2];
+        float tzmax = (maxB[2] - rayOrigin[2]) / rayDir[2];
+
+        if (tzmin > tzmax) std::swap(tzmin, tzmax);
+
+        if ((tmin > tzmax) || (tzmin > tmax))
+            return false;
+
+        return true;
+    }
+
+    /**
      * Check if a shadow ray from intersection point to light source hits any geometry
-     * Returns true if the point is in shadow (ray is blocked)
+     * OPTIMIZED: Uses Model Space Ray Tracing + AABB Culling
      */
     bool IsPointInShadow(
         const Vector3f& intersectionPoint,
         const Vector3f& lightPosition,
         OpenGLTriangleMesh* excludeMesh = nullptr)
     {
-        // Compute shadow ray direction and distance
-        Vector3f rayDir = lightPosition - intersectionPoint;
-        float lightDistance = rayDir.norm();
-        
-        if (lightDistance < 1e-6f)
-            return false; 
-            
-        rayDir.normalize();
-        
-        Vector3f rayOrigin = intersectionPoint + rayDir * 1e-4f;
+        const float EPSILON = 1e-4f;
         
         // Test against all meshes in the scene
         for (auto* mesh_obj : mesh_object_array) {
-            if (mesh_obj == excludeMesh)
-                continue;
-                
-            // Get model matrix (transforms from model space to world space)
+            
+            // Skip self-shadowing or specific exclusions
+            if (mesh_obj == excludeMesh) continue;
+            
+            // Cast to LanternObject to check AABB
+            LanternObject* lantern = dynamic_cast<LanternObject*>(mesh_obj);
+            if (!lantern) continue; // Only checking lanterns for now as they are the main occluders
+
+            // 1. Transform Ray to Model Space
             Matrix4f modelMatrix;
             for (int i = 0; i < 4; i++) {
                 for (int j = 0; j < 4; j++) {
-                    modelMatrix(i, j) = mesh_obj->model_matrix[j][i]; // GLM[col][row] -> Eigen(row,col)
+                    modelMatrix(i, j) = mesh_obj->model_matrix[j][i];
                 }
             }
             
+            // Invert to get World->Model transform
+            Matrix4f invModel = modelMatrix.inverse();
+            
+            // Transform World Points to Model Space
+            Vector4f originHom = invModel * Vector4f(intersectionPoint[0], intersectionPoint[1], intersectionPoint[2], 1.0f);
+            Vector4f lightHom = invModel * Vector4f(lightPosition[0], lightPosition[1], lightPosition[2], 1.0f);
+            
+            Vector3f rayOriginLocal(originHom[0], originHom[1], originHom[2]);
+            Vector3f lightPosLocal(lightHom[0], lightHom[1], lightHom[2]);
+            
+            Vector3f rayDirLocal = lightPosLocal - rayOriginLocal;
+            float lightDistLocal = rayDirLocal.norm();
+            
+            if (lightDistLocal < 1e-6f) continue;
+            
+            rayDirLocal.normalize();
+            
+            // Offset origin slightly to avoid self-intersection issues
+            rayOriginLocal += rayDirLocal * EPSILON;
+
+            // 2. AABB Culling in Model Space
+            // If ray doesn't hit the bounding box, it definitely doesn't hit the mesh
+            if (!IntersectAABB(rayOriginLocal, rayDirLocal, lantern->min_aabb, lantern->max_aabb)) {
+                continue;
+            }
+
+            // 3. Detailed Triangle Test in Model Space
             const auto& vertices = mesh_obj->mesh.Vertices();
             const auto& elements = mesh_obj->mesh.Elements();
             
             for (const auto& tri : elements) {
-                // Get triangle vertices in model space (Vector3)
-                const Vector3& v0_model = vertices[tri[0]];
-                const Vector3& v1_model = vertices[tri[1]];
-                const Vector3& v2_model = vertices[tri[2]];
+                // Vertices are already in Model Space
+                const Vector3& v0 = vertices[tri[0]];
+                const Vector3& v1 = vertices[tri[1]];
+                const Vector3& v2 = vertices[tri[2]];
                 
-                // Transform triangle vertices to world space
-                Vector3f v0_world = TransformPoint(modelMatrix, v0_model);
-                Vector3f v1_world = TransformPoint(modelMatrix, v1_model);
-                Vector3f v2_world = TransformPoint(modelMatrix, v2_model);
+                // Convert to Vector3f for intersect function
+                Vector3f v0f(v0[0], v0[1], v0[2]);
+                Vector3f v1f(v1[0], v1[1], v1[2]);
+                Vector3f v2f(v2[0], v2[1], v2[2]);
                 
-                // Test ray-triangle intersection
                 float t;
-                if (RayTriangleIntersect(rayOrigin, rayDir, v0_world, v1_world, v2_world, t)) {
-                    // Check if intersection is between point and light
-                    if (t < lightDistance - 1e-4f) {
-                        return true; // Ray is blocked, point is in shadow
+                if (RayTriangleIntersect(rayOriginLocal, rayDirLocal, v0f, v1f, v2f, t)) {
+                    // Check if intersection is valid and closer than the light
+                    if (t > 0 && t < lightDistLocal) {
+                        return true; // Occluded
                     }
                 }
             }
         }
         
-        return false; // No occlusion found, point is lit
+        return false; // No occlusion found
     }
 
     /**
@@ -662,12 +736,14 @@ public:
         float hero_current_y = -5.0f;
         float hero_drift_x = 0.0f;
         if (hero_lantern) {
-             float speed = 1.0f;
+             float speed = 0.8f; // Slightly faster than background
              float y_start = -5.0f;
              hero_current_y = y_start + speed * time;
              
-             hero_drift_x = std::sin(time * 0.5f) * 0.5f;
-             float swing_angle = std::sin(time * 2.0f) * 0.05f; 
+             // Complex drift for hero
+             hero_drift_x = std::sin(time * 0.4f) * 0.8f + std::cos(time * 0.15f) * 0.5f;
+             
+             float swing_angle = std::sin(time * 1.0f) * 0.08f; 
              
              // Rotation
              float c = std::cos(swing_angle);
@@ -684,12 +760,12 @@ public:
                       0, 1, 0, hero_current_y,
                       0, 0, 1, 0,
                       0, 0, 0, 1;
-             
-             // Scale
+
+             // Scale - Hero is huge now (2.5)
              Matrix4f scale;
-             scale << 0.5, 0, 0, 0,
-                      0, 0.5, 0, 0,
-                      0, 0, 0.5, 0,
+             scale << 2.5, 0, 0, 0,
+                      0, 2.5, 0, 0,
+                      0, 0, 2.5, 0,
                       0, 0, 0, 1;
 
              Matrix4f t = trans * rot * scale;
@@ -752,10 +828,10 @@ public:
              auto l = background_lanterns[i];
              
              std::mt19937 rng(42 + i); 
-             std::uniform_real_distribution<float> dist_x(-15.0f, 15.0f);
-             std::uniform_real_distribution<float> dist_y(-2.0f, 20.0f);
-             std::uniform_real_distribution<float> dist_z(-10.0f, 10.0f);
-             std::uniform_real_distribution<float> dist_scale(0.5f, 1.2f);
+             std::uniform_real_distribution<float> dist_x(-40.0f, 40.0f);
+             std::uniform_real_distribution<float> dist_y(-8.0f, 20.0f);
+             std::uniform_real_distribution<float> dist_z(-30.0f, 30.0f);
+             std::uniform_real_distribution<float> dist_scale(0.8f, 1.8f);
              
              float s_val = dist_scale(rng); 
              float x0 = dist_x(rng);
@@ -763,9 +839,43 @@ public:
              float z0 = dist_z(rng);
              if (std::abs(x0) < 2 && std::abs(y0 + 5) < 2) x0 += 5; 
              
-             float drift_y = std::sin(time * 0.3f + i) * 0.5f + (0.2f * time); 
-             float drift_x = std::cos(time * 0.2f + i * 0.5f) * 0.3f;
+             // Base movement - Slower rise, more complex drift
+             // Rise speed ~0.4 (vs Hero 0.6)
+             float current_base_y = y0 + 0.4f * time;
              
+             // Exaggerated Turbulence
+             float drift_y = std::sin(time * 0.5f + i) * 1.0f; 
+             float drift_x = std::cos(time * 0.3f + i * 0.7f) * 2.0f + std::sin(time * 0.1f) * 1.5f;
+             float drift_z = std::sin(time * 0.25f + i * 1.1f) * 1.5f;
+
+             // Flocking Logic
+             // As hero rises, lanterns get attracted to it
+             float flock_strength = 0.0f;
+             if (hero_lantern) {
+                 // Strength increases but capped at 0.85 to prevent full collapse
+                 flock_strength = (hero_current_y - (-5.0f)) / 25.0f; 
+                 flock_strength = std::max(0.0f, std::min(flock_strength, 0.85f));
+                 // Smooth easing
+                 flock_strength = flock_strength * flock_strength * (3.0f - 2.0f * flock_strength);
+             }
+
+             // Calculate final position
+             // Scatter position
+             float x_scatter = x0 + drift_x;
+             float y_scatter = current_base_y + drift_y;
+             float z_scatter = z0 + drift_z;
+
+             // Flock Target - LOOSE gathering
+             // Target is Hero Position + 60% of original offset (maintains formation but tighter)
+             float x_flock = hero_drift_x + (x0 * 0.6f); 
+             float y_flock = hero_current_y + (y0 * 0.9f) - 3.0f; // Follow slightly below/around
+             float z_flock = (z0 * 0.6f); 
+
+             // Interpolate
+             float final_x = x_scatter * (1.0f - flock_strength) + x_flock * flock_strength;
+             float final_y = y_scatter * (1.0f - flock_strength) + y_flock * flock_strength;
+             float final_z = z_scatter * (1.0f - flock_strength) + z_flock * flock_strength;
+
              float swing = std::sin(time * 1.5f + i) * 0.05f;
              float c = std::cos(swing);
              float s_sin = std::sin(swing);
@@ -777,9 +887,9 @@ public:
                     0, 0, 0, 1;
                     
              Matrix4f trans;
-             trans << 1, 0, 0, x0 + drift_x,
-                      0, 1, 0, y0 + drift_y,
-                      0, 0, 1, z0,
+             trans << 1, 0, 0, final_x,
+                      0, 1, 0, final_y,
+                      0, 0, 1, final_z,
                       0, 0, 0, 1;
                       
              Matrix4f scale;
@@ -793,7 +903,7 @@ public:
              
              // Update Glow (Index 1 + i)
              if(glow_system) {
-                 (*glow_system->particles.X())[1 + i] = Vector3(x0 + drift_x, y0 + drift_y, z0);
+                 (*glow_system->particles.X())[1 + i] = Vector3(final_x, final_y, final_z);
              }
         }
 

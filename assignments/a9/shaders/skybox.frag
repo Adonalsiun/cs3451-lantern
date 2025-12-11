@@ -29,6 +29,14 @@ void main()
     vec3 dir = normalize(vtx_model_position);
     vec3 color = texture(skybox, dir).rgb;
     
+    // Calculate transparency gradient
+    // Opaque at bottom (y <= 0), fades to transparent at top (y >= 0.8)
+    // We mix with black (0,0,0) to represent transparency against the void of space
+    float gradient_start = 0.0;
+    float gradient_end = 0.8;
+    float opacity = 1.0 - smoothstep(gradient_start, gradient_end, dir.y);
+    color *= opacity;
+
     // Procedural Stars
     // Map direction to a grid
     float scale = 80.0;
@@ -55,6 +63,7 @@ void main()
     // Add stars to background
     // Don't draw stars on bright parts of skybox (like moon/sun if present in texture)
     float brightness = dot(color, vec3(0.3, 0.59, 0.11));
+    // Since we faded the skybox color, brightness will be low at the top, allowing stars to show
     if(brightness < 0.2) {
         color += vec3(star);
     }
