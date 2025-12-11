@@ -23,44 +23,39 @@
 #define CLOCKS_PER_SEC 100000
 #endif
 
-// Custom Lantern Object for PCG
+/* Custom Lantern Object with AABB */
 class LanternObject : public OpenGLTriangleMesh {
 public:
     float seed = 0.0f;
-    // AABB for shadow optimization
     Vector3 min_aabb;
     Vector3 max_aabb;
 
     virtual void Set_Shader_Parameters() const override {
-        // Pass seed to shader
         if (shader_programs.size() > 0) {
             shader_programs[0]->Set_Uniform("seed", seed);
         }
     }
 };
 
+/* Main Driver Class for the Lantern Festival Scene */
 class MyDriver : public OpenGLViewer
 {
     std::vector<OpenGLTriangleMesh *> mesh_object_array;
     OpenGLBgEffect *bgEffect = nullptr;
     OpenGLSkybox *skybox = nullptr;
-    // OpenGLParticles<Particles<3>>* embers = nullptr; // Removed
-    OpenGLParticles<Particles<3>>* glow_system = nullptr; // Glow System
+    OpenGLParticles<Particles<3>>* glow_system = nullptr; 
     OpenGLParticles<Particles<3>>* trail_system = nullptr;
     clock_t startTime;
 
     OpenGLTriangleMesh* water_plane = nullptr;
 
-    // Lanterns
-    // Lanterns
     LanternObject* hero_lantern = nullptr;
     std::vector<LanternObject*> background_lanterns;
 
-    // Add to MyDriver class private section
     struct TrailParticle {
-        int index;          // Index in particle array
-        float birth_time;   // When particle was created
-        Vector3 velocity;   // Particle velocity
+        int index;          
+        float birth_time;   
+        Vector3 velocity;   
     };
 
     std::vector<TrailParticle> active_trails;
@@ -68,13 +63,13 @@ class MyDriver : public OpenGLViewer
     float last_trail_spawn_time = 0.0f;
 
 public:
+    /* Initialize viewer settings */
     virtual void Initialize()
     {
         draw_axes = false;
         startTime = clock();
         OpenGLViewer::Initialize();
         
-        // Initial Camera Setup
         if (opengl_window) {
             opengl_window->camera_distance = 15.0f;
             opengl_window->camera_target = Vector3f(0, 5, 0);
@@ -82,12 +77,11 @@ public:
         }
     }
 
+    /* Initialize all scene data, shaders, textures, and objects */
     virtual void Initialize_Data()
     {
-        //// Load Shaders
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/basic.vert", "shaders/basic.frag", "basic");
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/lantern.vert", "shaders/lantern.frag", "lantern"); 
-        // Embers shader removed
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/glow.vert", "shaders/glow.frag", "glow");
         OpenGLShaderLibrary::Instance()->Add_Shader_From_File("shaders/skybox.vert", "shaders/skybox.frag", "skybox");
 
@@ -99,18 +93,15 @@ public:
                                                         "shaders/trail.frag", 
                                                         "trail");
         
-        //// Load Textures
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/bunny_color.jpg", "bunny_color");
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/bunny_normal.png", "bunny_normal");
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/lantern_color.png", "lantern_color");
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/lantern_normal.png", "lantern_normal");
         OpenGLTextureLibrary::Instance()->Add_Texture_From_File("tex/buzz_color.png", "buzz_color"); 
 
-        //// Add Lights
-        opengl_window->Add_Light(Vector3f(3, 1, 3), Vector3f(0.2, 0.2, 0.2), Vector3f(0.8, 0.5, 0.2), Vector3f(0.5, 0.5, 0.5)); // Warm light
+        opengl_window->Add_Light(Vector3f(3, 1, 3), Vector3f(0.2, 0.2, 0.2), Vector3f(0.8, 0.5, 0.2), Vector3f(0.5, 0.5, 0.5)); 
         opengl_window->Add_Light(Vector3f(0, 0, -5), Vector3f(0.1, 0.1, 0.1), Vector3f(0.9, 0.9, 0.9), Vector3f(0.5, 0.5, 0.5));
 
-        //// Sky box
         {
             const std::vector<std::string> cubemap_files{
                 "cubemap/posx.jpg", "cubemap/negx.jpg",
@@ -124,24 +115,14 @@ public:
             skybox->Initialize();
         }
 
-        //// Embers - Removed
-        /*
-        {
-            embers = Add_Interactive_Object<OpenGLParticles<Particles<3>>>();
-            ...
-        }
-        */
-
-        //// Glow System
         {
             glow_system = Add_Interactive_Object<OpenGLParticles<Particles<3>>>();
             glow_system->particles.Add_Elements(1 + 100);
             glow_system->Initialize();
             
-            // Fix: Initialize points and Override shader
             glow_system->opengl_points.Initialize();
             glow_system->opengl_points.shader_programs[0] = OpenGLShaderLibrary::Get_Shader("glow");
-            glow_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 1.0f)); // Orange glow
+            glow_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 1.0f)); 
         }
 
         {
@@ -152,14 +133,12 @@ public:
             
             trail_system->opengl_points.Initialize();
             trail_system->opengl_points.shader_programs[0] = OpenGLShaderLibrary::Get_Shader("trail");
-            trail_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 0.0f)); // Start transparent
+            trail_system->Set_Color(OpenGLColor(1.0f, 0.5f, 0.0f, 0.0f)); 
         }
 
-        //// Water Plane
         {
-            water_plane = Create_Water_Plane(50.0f, 50); // 50x50 size, 50 subdivisions
+            water_plane = Create_Water_Plane(50.0f, 50); 
             
-            // Position at y = -10 (below lanterns)
             Matrix4f t;
             t << 1, 0, 0, 0,
                 0, 1, 0, -10,
@@ -167,7 +146,6 @@ public:
                 0, 0, 0, 1;
             water_plane->Set_Model_Matrix(t);
             
-            // Set material properties
             water_plane->Set_Ka(Vector3f(0.1, 0.1, 0.2));
             water_plane->Set_Kd(Vector3f(0.2, 0.4, 0.5));
             water_plane->Set_Ks(Vector3f(0.8, 0.8, 0.8));
@@ -180,12 +158,11 @@ public:
             water_plane->Initialize();
         }
 
-        //// Hero Lantern
         {
             hero_lantern = Add_Lantern_Object("obj/JapaneseLamp.obj", 123.4f);
             Matrix4f t;
             t << 0.5, 0, 0, 0,
-                 0, 0.5, 0, -5, // Start low
+                 0, 0.5, 0, -5, 
                  0, 0, 0.5, 0,
                  0, 0, 0, 1;
             hero_lantern->Set_Model_Matrix(t);
@@ -200,7 +177,6 @@ public:
             hero_lantern->Add_Shader_Program(OpenGLShaderLibrary::Get_Shader("lantern")); 
         }
 
-        //// Background Lanterns
         int num_lanterns = 100;
         std::mt19937 rng(42); 
         std::uniform_real_distribution<float> dist_x(-40.0f, 40.0f);
@@ -218,7 +194,7 @@ public:
             float y = dist_y(rng);
             float z = dist_z(rng);
 
-            if (std::abs(x) < 2 && std::abs(y + 5) < 2) x += 5; // Avoid hero
+            if (std::abs(x) < 2 && std::abs(y + 5) < 2) x += 5; 
 
             Matrix4f t;
             t << s, 0, 0, x,
@@ -237,8 +213,6 @@ public:
             lantern->Add_Shader_Program(OpenGLShaderLibrary::Get_Shader("lantern"));
         }
 
-
-        //// Initialize rendering model
         for (auto &mesh_obj : mesh_object_array){
             Set_Polygon_Mode(mesh_obj, PolygonMode::Fill);
             Set_Shading_Mode(mesh_obj, ShadingMode::TexAlpha);
@@ -248,6 +222,7 @@ public:
         Toggle_Play();
     }
 
+    /* Helper helper to create a lantern object */
     LanternObject *Add_Lantern_Object(std::string obj_file_name, float seed)
     {
         auto mesh_obj = Add_Interactive_Object<LanternObject>();
@@ -257,7 +232,6 @@ public:
         mesh_obj->mesh = *meshes[0];
         mesh_obj->seed = seed;
         
-        // Compute AABB
         if (!mesh_obj->mesh.Vertices().empty()) {
             Vector3 minB = mesh_obj->mesh.Vertices()[0];
             Vector3 maxB = mesh_obj->mesh.Vertices()[0];
@@ -273,30 +247,27 @@ public:
         return mesh_obj;
     }
 
+    /* Creates the water plane geometry */
     OpenGLTriangleMesh* Create_Water_Plane(float size, int subdivisions)
     {
         auto mesh_obj = Add_Interactive_Object<OpenGLTriangleMesh>();
         
-        // Create vertices for a subdivided plane
         std::vector<Vector3> vertices;
         std::vector<Vector3i> triangles;
         std::vector<Vector2> uvs;
         
         float step = size / subdivisions;
         
-        // Generate vertices
         for (int z = 0; z <= subdivisions; ++z) {
             for (int x = 0; x <= subdivisions; ++x) {
                 float px = -size/2 + x * step;
                 float pz = -size/2 + z * step;
                 vertices.push_back(Vector3(px, 0, pz));
                 
-                // UV coordinates
                 uvs.push_back(Vector2(float(x)/subdivisions, float(z)/subdivisions));
             }
         }
         
-        // Generate triangles
         for (int z = 0; z < subdivisions; ++z) {
             for (int x = 0; x < subdivisions; ++x) {
                 int i0 = z * (subdivisions + 1) + x;
@@ -304,48 +275,23 @@ public:
                 int i2 = i0 + (subdivisions + 1);
                 int i3 = i2 + 1;
                 
-                // Two triangles per quad
                 triangles.push_back(Vector3i(i0, i2, i1));
                 triangles.push_back(Vector3i(i1, i2, i3));
             }
         }
         
-        // Set mesh data
         mesh_obj->mesh.Vertices() = vertices;
         mesh_obj->mesh.Elements() = triangles;
         
-        // Calculate normals (all pointing up for a flat plane)
         std::vector<Vector3> normals(vertices.size(), Vector3(0, 1, 0));
         mesh_obj->mesh.Normals() = normals;
         
-        // Set UVs
         mesh_obj->mesh.Uvs() = uvs;
  
         return mesh_obj;
     }
 
-    // ========== Shadow Ray Computation Functions ==========
-    //
-    // These functions implement shadow computation by casting shadow rays from intersection
-    // points to light sources (lanterns). The implementation uses ray-triangle intersection
-    // testing to determine if a point is occluded from a light source.
-    //
-    // Usage Example:
-    //   Vector3f intersectionPoint(0.0f, 5.0f, 0.0f);  // World space point
-    //   float shadowFactor = ComputeShadowFactor(intersectionPoint);
-    //   // shadowFactor is 0.0 (fully shadowed) to 1.0 (fully lit)
-    //
-    //   // Or check individual lights:
-    //   std::vector<Vector3f> lanterns = GetLanternPositions();
-    //   for (const auto& lightPos : lanterns) {
-    //       bool inShadow = IsPointInShadow(intersectionPoint, lightPos);
-    //       // Use inShadow to modulate lighting contribution
-    //   }
-    //
-    
-    /**
-     * Transform a 3D point from model space to world space using a 4x4 transformation matrix
-     */
+    /* Transform a point from model space to world space */
     Vector3f TransformPoint(const Matrix4f& transform, const Vector3& point)
     {
         Vector4f homogeneous(static_cast<float>(point[0]), static_cast<float>(point[1]), static_cast<float>(point[2]), 1.0f);
@@ -353,10 +299,7 @@ public:
         return Vector3f(transformed[0], transformed[1], transformed[2]);
     }
 
-    /**
-     * Ray-Triangle Intersection TEST ONLY (Moller-Trumbore algorithm)
-     * Returns true if ray intersects triangle, and stores the intersection distance in t
-     */
+    /* Computes ray intersection with a triangle */
     bool RayTriangleIntersect(
         const Vector3f& rayOrigin, 
         const Vector3f& rayDir,
@@ -373,7 +316,7 @@ public:
         float a = edge1.dot(h);
         
         if (a > -EPSILON && a < EPSILON)
-            return false; // Ray is parallel to triangle
+            return false; 
             
         float f = 1.0f / a;
         Vector3f s = rayOrigin - v0;
@@ -388,16 +331,12 @@ public:
         if (v < 0.0f || u + v > 1.0f)
             return false;
             
-        // Compute intersection distance
         t = f * edge2.dot(q);
         
-        // Check if intersection is in front of ray origin
         return t > EPSILON;
     }
 
-    /**
-     * AABB Intersection Test
-     */
+    /* Checks intersection with Axis-Aligned Bounding Box */
     bool IntersectAABB(const Vector3f& rayOrigin, const Vector3f& rayDir, const Vector3& minB, const Vector3& maxB)
     {
         float tmin = (minB[0] - rayOrigin[0]) / rayDir[0];
@@ -430,10 +369,7 @@ public:
         return true;
     }
 
-    /**
-     * Check if a shadow ray from intersection point to light source hits any geometry
-     * OPTIMIZED: Uses Model Space Ray Tracing + AABB Culling
-     */
+    /* Checks if a point is in shadow by testing occlusion */
     bool IsPointInShadow(
         const Vector3f& intersectionPoint,
         const Vector3f& lightPosition,
@@ -441,17 +377,13 @@ public:
     {
         const float EPSILON = 1e-4f;
         
-        // Test against all meshes in the scene
         for (auto* mesh_obj : mesh_object_array) {
             
-            // Skip self-shadowing or specific exclusions
             if (mesh_obj == excludeMesh) continue;
             
-            // Cast to LanternObject to check AABB
             LanternObject* lantern = dynamic_cast<LanternObject*>(mesh_obj);
-            if (!lantern) continue; // Only checking lanterns for now as they are the main occluders
+            if (!lantern) continue; 
 
-            // 1. Transform Ray to Model Space
             Matrix4f modelMatrix;
             for (int i = 0; i < 4; i++) {
                 for (int j = 0; j < 4; j++) {
@@ -459,10 +391,8 @@ public:
                 }
             }
             
-            // Invert to get World->Model transform
             Matrix4f invModel = modelMatrix.inverse();
             
-            // Transform World Points to Model Space
             Vector4f originHom = invModel * Vector4f(intersectionPoint[0], intersectionPoint[1], intersectionPoint[2], 1.0f);
             Vector4f lightHom = invModel * Vector4f(lightPosition[0], lightPosition[1], lightPosition[2], 1.0f);
             
@@ -476,47 +406,37 @@ public:
             
             rayDirLocal.normalize();
             
-            // Offset origin slightly to avoid self-intersection issues
             rayOriginLocal += rayDirLocal * EPSILON;
 
-            // 2. AABB Culling in Model Space
-            // If ray doesn't hit the bounding box, it definitely doesn't hit the mesh
             if (!IntersectAABB(rayOriginLocal, rayDirLocal, lantern->min_aabb, lantern->max_aabb)) {
                 continue;
             }
 
-            // 3. Detailed Triangle Test in Model Space
             const auto& vertices = mesh_obj->mesh.Vertices();
             const auto& elements = mesh_obj->mesh.Elements();
             
             for (const auto& tri : elements) {
-                // Vertices are already in Model Space
                 const Vector3& v0 = vertices[tri[0]];
                 const Vector3& v1 = vertices[tri[1]];
                 const Vector3& v2 = vertices[tri[2]];
                 
-                // Convert to Vector3f for intersect function
                 Vector3f v0f(v0[0], v0[1], v0[2]);
                 Vector3f v1f(v1[0], v1[1], v1[2]);
                 Vector3f v2f(v2[0], v2[1], v2[2]);
                 
                 float t;
                 if (RayTriangleIntersect(rayOriginLocal, rayDirLocal, v0f, v1f, v2f, t)) {
-                    // Check if intersection is valid and closer than the light
                     if (t > 0 && t < lightDistLocal) {
-                        return true; // Occluded
+                        return true; 
                     }
                 }
             }
         }
         
-        return false; // No occlusion found
+        return false; 
     }
 
-    /**
-     * Get all lantern positions (light sources) in world space
-     * Returns a vector of lantern positions
-     */
+    /* Returns a list of lantern positions in world space */
     std::vector<Vector3f> GetLanternPositions()
     {
         std::vector<Vector3f> positions;
@@ -524,8 +444,6 @@ public:
         if (!glow_system)
             return positions;
             
-        // Get positions from glow system particles
-        // Index 0 is hero lantern, indices 1+ are background lanterns
         const auto& particlePositions = glow_system->particles.X();
         
         for (size_t i = 0; i < particlePositions->size(); ++i) {
@@ -536,11 +454,7 @@ public:
         return positions;
     }
 
-    /**
-     * Compute shadow factor for a point from all lantern light sources
-     * Returns a value between 0.0 (fully shadowed) and 1.0 (fully lit)
-     * This can be used to modulate lighting contribution
-     */
+    /* Computes the shadow factor for a given point */
     float ComputeShadowFactor(const Vector3f& intersectionPoint, OpenGLTriangleMesh* excludeMesh = nullptr)
     {
         std::vector<Vector3f> lanternPositions = GetLanternPositions();
@@ -551,21 +465,16 @@ public:
         int litCount = 0;
         int totalLights = lanternPositions.size();
         
-        // Check shadow from each lantern
         for (const auto& lightPos : lanternPositions) {
             if (!IsPointInShadow(intersectionPoint, lightPos, excludeMesh)) {
                 litCount++;
             }
         }
         
-        // Return fraction of lights that are not blocked
         return static_cast<float>(litCount) / static_cast<float>(totalLights);
     }
 
-    /**
-     * Compute individual shadow factors for each lantern
-     * Returns a vector where each element is 1.0 if that lantern is visible, 0.0 if shadowed
-     */
+    /* Calculates per-light shadow factors */
     std::vector<float> ComputeShadowFactorsPerLight(const Vector3f& intersectionPoint, OpenGLTriangleMesh* excludeMesh = nullptr)
     {
         std::vector<Vector3f> lanternPositions = GetLanternPositions();
@@ -579,18 +488,14 @@ public:
         return shadowFactors;
     }
 
-    // Shadow computation settings
     bool enable_shadows = true;
-    int shadow_update_interval = 15; // Update shadows every N frames (15 = every 15 frames for performance)
+    int shadow_update_interval = 15; 
     int frame_count = 0;
-    float current_shadow_factor = 1.0f; // Current shadow factor (persists between updates)
+    float current_shadow_factor = 1.0f; 
     
-    bool debug_shadows = false; // Set to true to see shadow computation in console (disabled for performance)
+    bool debug_shadows = false; 
 
-    /**
-     * Compute shadow factors for vertices of a mesh
-     * Stores shadow factors that can be passed to shader
-     */
+    /* Computes shadow factors for the entire mesh */
     void ComputeMeshShadowFactors(OpenGLTriangleMesh* mesh_obj, std::vector<float>& shadowFactors)
     {
         shadowFactors.clear();
@@ -598,7 +503,6 @@ public:
         if (!enable_shadows || !mesh_obj)
             return;
             
-        // Get mesh vertices in world space
         Matrix4f modelMatrix;
         for (int i = 0; i < 4; i++) {
             for (int j = 0; j < 4; j++) {
@@ -609,7 +513,6 @@ public:
         const auto& vertices = mesh_obj->mesh.Vertices();
         shadowFactors.reserve(vertices.size());
         
-        // Compute shadow factor for each vertex
         for (const auto& vtx : vertices) {
             Vector3f worldPos = TransformPoint(modelMatrix, vtx);
             float shadowFactor = ComputeShadowFactor(worldPos, mesh_obj);
@@ -617,19 +520,14 @@ public:
         }
     }
 
-    /**
-     * Update shadow data and pass to shaders
-     * Computes shadows for key points and passes lantern positions to shaders
-     */
+    /* Updates global shadow data for shaders */
     void UpdateShadowData()
     {
-        // Get all lantern positions
         std::vector<Vector3f> lanternPositions = GetLanternPositions();
         
         if (lanternPositions.empty())
             return;
             
-        // Get the lantern shader
         auto lanternShader = OpenGLShaderLibrary::Get_Shader("lantern");
         if (!lanternShader)
             return;
@@ -653,7 +551,7 @@ public:
                     }
                 }
                 const auto& vertices = hero_lantern->mesh.Vertices();
-                int sampleStep = std::max(1, (int)vertices.size() / 3); // Sample ~3 vertices
+                int sampleStep = std::max(1, (int)vertices.size() / 3); 
                 for (size_t v = 0; v < vertices.size() && sampleCount < 3; v += sampleStep) {
                     Vector3f worldPos = TransformPoint(heroMatrix, vertices[v]);
                     float shadowFactor = ComputeShadowFactor(worldPos, hero_lantern);
@@ -671,7 +569,7 @@ public:
                     }
                 }
                 const auto& vertices = lantern->mesh.Vertices();
-                int sampleStep = std::max(1, (int)vertices.size() / 2); // Sample ~2 vertices
+                int sampleStep = std::max(1, (int)vertices.size() / 2); 
                 for (size_t v = 0; v < vertices.size() && v < 5; v += sampleStep) {
                     Vector3f worldPos = TransformPoint(lanternMatrix, vertices[v]);
                     float shadowFactor = ComputeShadowFactor(worldPos, lantern);
@@ -692,10 +590,10 @@ public:
             }
         }
         
-        // Always set shadow factor (even if not updated this frame, use previous value)
         lanternShader->Set_Uniform("global_shadow_factor", current_shadow_factor);
     }
 
+    /* Simulation loop for each frame */
     virtual void Toggle_Next_Frame()
     {
         float time = GLfloat(clock() - startTime) / CLOCKS_PER_SEC;
@@ -703,7 +601,6 @@ public:
         OpenGLShaderLibrary::Get_Shader("lantern")->Set_Uniform("time", time);
         OpenGLShaderLibrary::Get_Shader("glow")->Set_Uniform("time", time);
 
-        // Update trail shader time
         if (trail_system) {
             OpenGLShaderLibrary::Get_Shader("trail")->Set_Uniform("time", time);
         }
@@ -716,7 +613,6 @@ public:
         for (auto &mesh_obj : mesh_object_array)
             mesh_obj->setTime(time);
         
-        // Update shadow data (pass lantern positions to shader)
         UpdateShadowData();
         frame_count++;
 
@@ -730,22 +626,17 @@ public:
             skybox->setTime(time);
         }
 
-        // --- Physics & Animation ---
-        
-        // Hero
         float hero_current_y = -5.0f;
         float hero_drift_x = 0.0f;
         if (hero_lantern) {
-             float speed = 0.8f; // Slightly faster than background
+             float speed = 0.8f; 
              float y_start = -5.0f;
              hero_current_y = y_start + speed * time;
              
-             // Complex drift for hero
              hero_drift_x = std::sin(time * 0.4f) * 0.8f + std::cos(time * 0.15f) * 0.5f;
              
              float swing_angle = std::sin(time * 1.0f) * 0.08f; 
              
-             // Rotation
              float c = std::cos(swing_angle);
              float s = std::sin(swing_angle);
              Matrix4f rot;
@@ -754,14 +645,12 @@ public:
                     0, 0, 1, 0,
                     0, 0, 0, 1;
 
-             // Translation
              Matrix4f trans;
              trans << 1, 0, 0, hero_drift_x,
                       0, 1, 0, hero_current_y,
                       0, 0, 1, 0,
                       0, 0, 0, 1;
 
-             // Scale - Hero is huge now (2.5)
              Matrix4f scale;
              scale << 2.5, 0, 0, 0,
                       0, 2.5, 0, 0,
@@ -771,7 +660,6 @@ public:
              Matrix4f t = trans * rot * scale;
              hero_lantern->Set_Model_Matrix(t);
              
-             // Update Glow (Index 0)
              if(glow_system) {
                  (*glow_system->particles.X())[0] = Vector3(hero_drift_x, hero_current_y, 0);
              }
@@ -797,16 +685,13 @@ public:
             float lifetime = 8.0f;
             float dt = 0.016f;
             
-            // Update all active trails
             for (auto it = active_trails.begin(); it != active_trails.end(); ) {
                 float age = time - it->birth_time;
                 
                 if (age > lifetime) {
-                    // Move particle far away and remove from active list
                     (*trail_system->particles.X())[it->index] = Vector3(10000, 10000, 10000);
                     it = active_trails.erase(it);
                 } else {
-                    // Update position - keep them moving
                     int idx = it->index;
                     Vector3 current_pos = (*trail_system->particles.X())[idx];
                     Vector3 new_pos(
@@ -823,7 +708,6 @@ public:
             trail_system->Set_Color(OpenGLColor(1.0f, 0.7f, 0.2f, 1.0f));
             trail_system->Set_Data_Refreshed();
         }
-        // Background Lanterns
         for (size_t i = 0; i < background_lanterns.size(); ++i) {
              auto l = background_lanterns[i];
              
@@ -839,39 +723,27 @@ public:
              float z0 = dist_z(rng);
              if (std::abs(x0) < 2 && std::abs(y0 + 5) < 2) x0 += 5; 
              
-             // Base movement - Slower rise, more complex drift
-             // Rise speed ~0.4 (vs Hero 0.6)
              float current_base_y = y0 + 0.4f * time;
              
-             // Exaggerated Turbulence
              float drift_y = std::sin(time * 0.5f + i) * 1.0f; 
              float drift_x = std::cos(time * 0.3f + i * 0.7f) * 2.0f + std::sin(time * 0.1f) * 1.5f;
              float drift_z = std::sin(time * 0.25f + i * 1.1f) * 1.5f;
 
-             // Flocking Logic
-             // As hero rises, lanterns get attracted to it
              float flock_strength = 0.0f;
              if (hero_lantern) {
-                 // Strength increases but capped at 0.85 to prevent full collapse
                  flock_strength = (hero_current_y - (-5.0f)) / 25.0f; 
                  flock_strength = std::max(0.0f, std::min(flock_strength, 0.85f));
-                 // Smooth easing
                  flock_strength = flock_strength * flock_strength * (3.0f - 2.0f * flock_strength);
              }
 
-             // Calculate final position
-             // Scatter position
              float x_scatter = x0 + drift_x;
              float y_scatter = current_base_y + drift_y;
              float z_scatter = z0 + drift_z;
 
-             // Flock Target - LOOSE gathering
-             // Target is Hero Position + 60% of original offset (maintains formation but tighter)
              float x_flock = hero_drift_x + (x0 * 0.6f); 
-             float y_flock = hero_current_y + (y0 * 0.9f) - 3.0f; // Follow slightly below/around
+             float y_flock = hero_current_y + (y0 * 0.9f) - 3.0f; 
              float z_flock = (z0 * 0.6f); 
 
-             // Interpolate
              float final_x = x_scatter * (1.0f - flock_strength) + x_flock * flock_strength;
              float final_y = y_scatter * (1.0f - flock_strength) + y_flock * flock_strength;
              float final_z = z_scatter * (1.0f - flock_strength) + z_flock * flock_strength;
@@ -901,18 +773,10 @@ public:
              Matrix4f t = trans * rot * scale;
              l->Set_Model_Matrix(t);
              
-             // Update Glow (Index 1 + i)
              if(glow_system) {
                  (*glow_system->particles.X())[1 + i] = Vector3(final_x, final_y, final_z);
              }
         }
-
-        // Embers Simulation - Removed
-        /*
-        if (embers) {
-            ...
-        }
-        */
         
         if(glow_system) glow_system->Set_Data_Refreshed();
 
